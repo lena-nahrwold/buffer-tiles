@@ -1,7 +1,14 @@
 import re
 import json
 import pdal
-from pathlib import Path
+import subprocess
+
+def get_bounds(tile):
+    cmd = ["pdal", "info", str(tile), "--bounds"]
+    out = subprocess.check_output(cmd)
+    info = json.loads(out)
+    b = info["bounds"]["native"]["bbox"]
+    return b["minx"], b["maxx"], b["miny"], b["maxy"]
 
 def crop_tiles(params):
     INPUT_DIR = params.input_dir
@@ -33,6 +40,13 @@ def crop_tiles(params):
                 {
                     "type": "filters.crop",
                     "bounds": bounds
+                },
+                {
+                    "type": "filters.expression",
+                    "expression": f"""
+                        floor(X/{TILE_SIZE}) == {x // TILE_SIZE} &&
+                        floor(Y/{TILE_SIZE}) == {y // TILE_SIZE}
+                    """
                 },
                 {
                     "type": "writers.las",

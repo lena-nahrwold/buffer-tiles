@@ -1,3 +1,3 @@
 # Find neighboring tiles and add buffer around tiles
 
-`python src/run.py --buffer_size 10 --input_dir /in --output_dir /src/out`
+`python src/run.py --task buffer --buffer_size 10 --input_dir /path/to/input --output_dir /path/to/output`
