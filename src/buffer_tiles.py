@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-def buffer_single_file(args: Tuple[List, Tuple, Dict, int, 
+def buffer_single_tile(args: Tuple[List, Tuple, Dict, int, 
 int, Path, Path]) -> Tuple[str, bool, str]:
     offsets, (x,y), tiles, buffer_size, tile_size, buffered_tiles_dir, tile_path = args
 
@@ -124,7 +124,7 @@ def buffer_tiles(
     failed = 0
 
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        futures = {executor.submit(buffer_single_file, task): task[0] for task in tasks}
+        futures = {executor.submit(buffer_single_tile, task): task[0] for task in tasks}
         
         for future in as_completed(futures):
             filename, success, message = future.result()

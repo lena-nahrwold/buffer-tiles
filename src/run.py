@@ -14,7 +14,7 @@ def run_buffer_task(params):
     print("Running Buffer Task (Python Pipeline)")
     print("=" * 60)
     print(f"Input directory: {input_dir}")
-    print(f"Output directory: {output_dir}")
+    print(f"Output base directory: {output_dir}")
     print(f"Tile buffer: {buffer_size}m")
     print(f"Workers: {workers}")
     print()
@@ -28,24 +28,28 @@ def run_buffer_task(params):
     print(f"  Buffered tiles directory: {buffered_tiles_dir}")
 
 def run_crop_task(params):
+    input_dir = params.input_dir
+    output_dir = params.output_dir
+    orig_tiles_dir= params.orig_tiles_dir
+    workers = params.workers
+
     print("=" * 60)
     print("Running Crop Task (Python Pipeline)")
     print("=" * 60)
-    print(f"Input directory: {params.input_dir}")
-    print(f"Output directory: {params.output_dir}")
-    print(f"Original tiles directory: {params.orig_tiles_dir}")
-    print(f"Workers: {params.workers}")
+    print(f"Input directory: {input_dir}")
+    print(f"Output base directory: {output_dir}")
+    print(f"Original tiles directory: {orig_tiles_dir}")
+    print(f"Workers: {workers}")
     print()
 
-    crop_tiles(params)
+    crop_tiles(input_dir, output_dir, orig_tiles_dir, workers)
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", type=str, required=True)
-    parser.add_argument("--tile_size", default=None, type=int)
     parser.add_argument("--buffer_size", default=10, type=int)
-    parser.add_argument("--input_dir", type=str, default="./input")
-    parser.add_argument("--output_dir", type=str)
+    parser.add_argument("--input_dir", type=str, required=True)
+    parser.add_argument("--output_dir", type=str, default="src/output")
     parser.add_argument("--orig_tiles_dir", type=str)
     parser.add_argument("--workers", type=int, default=4)
 
@@ -63,8 +67,12 @@ def main():
     if args.task == "buffer":
         run_buffer_task(args)
     elif args.task == "crop":
-        if not args.tile_size:
-            print("Original tile size needed for crop task. Please re-run the script and add --tile_size.")
+        if not args.orig_tiles_dir:
+            print("Path to riginal tiles needed for crop task. Please re-run the script and add --orig_tiles_dir.")
+            sys.exit(1)
+        args.orig_tiles_dir = Path(args.orig_tiles_dir)
+        if not args.orig_tiles_dir.exists():
+            print(f"Error: Original tiles directory does not exist: {args.orig_tiles_dir}")
             sys.exit(1)
         run_crop_task(args)
     else:
