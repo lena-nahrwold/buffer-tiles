@@ -1,9 +1,19 @@
 import re
 import json
 import pdal
+import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
+
+def get_native_bounds(laz_path):
+    out = subprocess.check_output(
+        ["pdal", "info", str(laz_path)],
+        text=True
+    )
+    info = json.loads(out)
+    bbox = info["stats"]["bbox"]["native"]["bbox"]
+    return bbox["minx"], bbox["maxx"], bbox["miny"], bbox["maxy"]
 
 def buffer_single_tile(args: Tuple[List, Tuple, Dict, int, 
 int, Path, Path]) -> Tuple[str, bool, str]:
@@ -18,12 +28,14 @@ int, Path, Path]) -> Tuple[str, bool, str]:
                 neighbors.append(tiles[key])
 
         # Buffered bounds
-        xmin = x - buffer_size
-        ymin = y - buffer_size
-        xmax = x + tile_size + buffer_size
-        ymax = y + tile_size + buffer_size
+        xmin, xmax, ymin, ymax = get_native_bounds(tile_path)
 
-        bounds = f"([{xmin},{xmax}],[{ymin},{ymax}])"
+        xmin_b = xmin - buffer_size
+        xmax_b = xmax + buffer_size
+        ymin_b = ymin - buffer_size
+        ymax_b = ymax + buffer_size
+
+        bounds = f"([{xmin_b},{xmax_b}],[{ymin_b},{ymax_b}])"
 
         out_file = buffered_tiles_dir / tile_path.name
 

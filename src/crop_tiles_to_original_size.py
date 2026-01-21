@@ -1,10 +1,120 @@
-import re
 import json
 import pdal
+import laspy
 import subprocess
+import numpy as np
+from scipy.spatial import cKDTree
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
+
+def crop_single_tile(args: Tuple[Path, Path, Path]):
+    buffered_tile_path, orig_tiles_dir, cropped_tiles_dir = args
+    
+    try:
+        # Load buffered tile
+        las = laspy.read(str(buffered_tile_path), laz_backend=laspy.LazBackend.LazrsParallel)
+        n_points = len(las.points)
+        
+        # Extract XYZ
+        points = np.vstack([las.x, las.y, las.z]).T
+        
+        # Deduplicate
+        unique_points = deduplicate_points(points)
+        removed_count = n_points - len(unique_points)
+        print(f"  [INFO] Removed {removed_count:,} duplicates ({100*removed_count/n_points:.1f}%)")
+        
+        # Build small local KDTree
+        tree = cKDTree(points)
+        distances, indices = tree.query(unique_points, k=1, distance_upper_bound=0.001)
+        valid_indices = indices[~np.isinf(distances)].astype(int)
+        
+        # Create output with ALL original attributes preserved
+        out_las = laspy.create(file_version=las.header.version, point_format=las.header.point_format)
+        out_las.header.offsets = las.header.offsets
+        out_las.header.scales = las.header.scales
+        
+        # Copy ALL dimensions for surviving points
+        out_las.points = las.points[valid_indices]
+        
+        # Crop to original bounds
+        original_tile = orig_tiles_dir / buffered_tile_path.name
+        minx, maxx, miny, maxy = get_native_bounds(original_tile)
+        
+        mask = (
+            (out_las.x >= minx) & (out_las.x <= maxx) &
+            (out_las.y >= miny) & (out_las.y <= maxy)
+        )
+        out_las.points = out_las.points[mask]
+        
+        # Write output
+        output_path = cropped_tiles_dir / buffered_tile_path.name
+        out_las.write(output_path)
+
+        return (buffered_tile_path.name, True, "Success")
+    
+    except Exception as e:
+        return (buffered_tile_path.name, False, str(e))
+
+
+def deduplicate_points(
+    points: np.ndarray,
+    tolerance: float = 0.001,
+    grid_size: float = 50.0,
+) -> Tuple[np.ndarray]:
+    """
+    Remove duplicate points from overlapping tiles using grid-based processing.
+    When duplicates exist, keep the one with higher instance ID.
+
+    Uses spatial grid cells to reduce memory usage - instead of sorting billions
+    of points at once, we process smaller cells independently.
+
+    Args:
+        points: Nx3 array of point coordinates
+        tolerance: Distance tolerance (default 1mm)
+        grid_size: Size of spatial grid cells in meters (default 50m)
+
+    Returns:
+        Tuple of (unique_points)
+    """
+    n_points = len(points)
+    scale = 1.0 / tolerance
+
+    # Compute grid cell indices for each point
+    min_coords = points.min(axis=0)
+    grid_indices = ((points[:, :2] - min_coords[:2]) / grid_size).astype(np.int32)
+
+    # Create cell keys (combine x,y grid indices into single key)
+    max_grid_y = grid_indices[:, 1].max() + 1
+    cell_keys = grid_indices[:, 0] * max_grid_y + grid_indices[:, 1]
+
+    # Round coordinates to tolerance for duplicate detection
+    rounded = np.floor(points * scale).astype(np.int64)
+
+    # Create point hash: combine cell key, rounded coords, and negative instance for sorting
+    # We want higher instance IDs to come first within same position
+    point_hash = rounded[:, 0] + rounded[:, 1] * 73856093 + rounded[:, 2] * 19349669
+
+    # Sort by: cell_key, point_hash, then -instance (so higher instance comes first)
+    sort_order = np.lexsort((point_hash, cell_keys))
+
+    sorted_cell_keys = cell_keys[sort_order]
+    sorted_point_hash = point_hash[sort_order]
+
+    # Find duplicates: same cell AND same point hash
+    is_duplicate = np.zeros(n_points, dtype=bool)
+    is_duplicate[1:] = (sorted_cell_keys[1:] == sorted_cell_keys[:-1]) & (
+        sorted_point_hash[1:] == sorted_point_hash[:-1]
+    )
+
+    # Map back to original indices
+    keep_mask = np.ones(n_points, dtype=bool)
+    keep_mask[sort_order[is_duplicate]] = False
+
+    # Extract kept points
+    unique_points = points[keep_mask]
+
+    return unique_points
 
 def get_native_bounds(laz_path):
     out = subprocess.check_output(
@@ -15,42 +125,7 @@ def get_native_bounds(laz_path):
     bbox = info["stats"]["bbox"]["native"]["bbox"]
     return bbox["minx"], bbox["maxx"], bbox["miny"], bbox["maxy"]
 
-def crop_single_tile(args: Tuple[Path, Path, Path]):
-    file_path, orig_tiles_dir, cropped_tiles_dir = args
-
-    try:
-        original_tile = orig_tiles_dir / file_path.name
-
-        minx, maxx, miny, maxy = get_native_bounds(original_tile)
-        
-        bounds = f"([{minx},{maxx}],[{miny},{maxy}])"
-        
-        out_file = cropped_tiles_dir / file_path.name
-        pipeline = {
-            "pipeline": [
-                str(file_path),
-                {
-                    "type": "filters.crop",
-                    "bounds": bounds
-                },
-                {
-                    "type": "writers.las",
-                    "filename": str(out_file),
-                    "extra_dims": "all",
-                    "compression": "laszip"
-                }
-            ]
-        }
-
-        p = pdal.Pipeline(json.dumps(pipeline))
-        p.execute()
-
-        return (file_path.name, True, "Success")
     
-    except Exception as e:
-        return (file_path.name, False, str(e))
-    
-
 def crop_tiles(
     input_dir: Path,
     output_dir: Path,
