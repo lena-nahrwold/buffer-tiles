@@ -3,10 +3,13 @@ import json
 import pdal
 import subprocess
 from pathlib import Path
+import tempfile
+import shutil
+from tqdm import tqdm
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-def get_native_bounds(laz_path):
+def get_native_bounds(laz_path: Path):
     out = subprocess.check_output(
         ["pdal", "info", str(laz_path)],
         text=True
@@ -39,25 +42,44 @@ int, Path, Path]) -> Tuple[str, bool, str]:
 
         out_file = buffered_tiles_dir / tile_path.name
 
-        pipeline = {
+        # Create a temporary directory for buffer files
+        tmp_dir = Path(tempfile.mkdtemp(prefix="pdal_buffer_", dir=buffered_tiles_dir))
+
+        buffer_files = []
+
+        # Create buffer tiles from neighbors
+        for n_path in tqdm(neighbors, disable=True):
+            buffer_file = tmp_dir / f"{n_path.stem}_buffer.laz"
+
+            buffer_pipeline = {
+                "pipeline": [
+                    {"type": "readers.las", "filename": str(n_path)},
+                    {"type": "filters.crop", "bounds": bounds},
+                    {"type": "writers.las", "filename": str(buffer_file),
+                     "compression": "laszip", "extra_dims": "all"}
+                ]
+            }
+
+            p = pdal.Pipeline(json.dumps(buffer_pipeline))
+            p.execute()
+            buffer_files.append(buffer_file)
+
+        # Merge core tile + all buffer files
+        merge_pipeline = {
             "pipeline": [
-                str(tile_path),
-                *map(str, neighbors),
-                {
-                    "type": "filters.crop",
-                    "bounds": bounds
-                },
-                {
-                    "type": "writers.las",
-                    "filename": str(out_file),
-                    "extra_dims": "all",
-                    "compression": "laszip"
-                }
+                {"type": "readers.las", "filename": str(tile_path)},
+                *({"type": "readers.las", "filename": str(f)} for f in buffer_files),
+                {"type": "filters.merge"},
+                {"type": "writers.las", "filename": str(out_file),
+                 "compression": "laszip", "extra_dims": "all"}
             ]
         }
 
-        p = pdal.Pipeline(json.dumps(pipeline))
-        p.execute()
+        p_merge = pdal.Pipeline(json.dumps(merge_pipeline))
+        p_merge.execute()
+
+        # Delete the temporary folder with buffer tiles
+        shutil.rmtree(tmp_dir)
 
         return (tile_path.name, True, "Success")
         

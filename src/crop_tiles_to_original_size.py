@@ -8,48 +8,73 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-def crop_single_tile(args: Tuple[Path, Path, Path]):
-    buffered_tile_path, orig_tiles_dir, cropped_tiles_dir = args
+def crop_single_tile(args: Tuple[Path, Path, Path, bool]):
+    buffered_tile_path, orig_tiles_dir, cropped_tiles_dir, deduplicate = args
     
     try:
         # Load buffered tile
         las = laspy.read(str(buffered_tile_path), laz_backend=laspy.LazBackend.LazrsParallel)
-        n_points = len(las.points)
-        
-        # Extract XYZ
-        points = np.vstack([las.x, las.y, las.z]).T
-        
-        # Deduplicate
-        unique_points = deduplicate_points(points)
-        removed_count = n_points - len(unique_points)
-        print(f"  [INFO] Removed {removed_count:,} duplicates ({100*removed_count/n_points:.1f}%)")
-        
-        # Build small local KDTree
-        tree = cKDTree(points)
-        distances, indices = tree.query(unique_points, k=1, distance_upper_bound=0.001)
-        valid_indices = indices[~np.isinf(distances)].astype(int)
-        
-        # Create output with ALL original attributes preserved
-        out_las = laspy.create(file_version=las.header.version, point_format=las.header.point_format)
-        out_las.header.offsets = las.header.offsets
-        out_las.header.scales = las.header.scales
-        
-        # Copy ALL dimensions for surviving points
-        out_las.points = las.points[valid_indices]
-        
-        # Crop to original bounds
+
         original_tile = orig_tiles_dir / buffered_tile_path.name
         minx, maxx, miny, maxy = get_native_bounds(original_tile)
-        
-        mask = (
-            (out_las.x >= minx) & (out_las.x <= maxx) &
-            (out_las.y >= miny) & (out_las.y <= maxy)
-        )
-        out_las.points = out_las.points[mask]
-        
-        # Write output
+
         output_path = cropped_tiles_dir / buffered_tile_path.name
-        out_las.write(output_path)
+
+        if deduplicate:
+            n_points = len(las.points)
+
+            # Extract XYZ
+            points = np.vstack([las.x, las.y, las.z]).T
+
+            # Deduplicate
+            unique_points = deduplicate_points(points)
+            removed_count = n_points - len(unique_points)
+            print(f"[INFO] {buffered_tile_path.name}: Removed {removed_count:,} duplicates ({100*removed_count/n_points:.1f}%)")
+
+            # Build small local KDTree
+            tree = cKDTree(points)
+            distances, indices = tree.query(unique_points, k=1, distance_upper_bound=0.001)
+            valid_indices = indices[~np.isinf(distances)].astype(int)
+
+            # Create output with ALL original attributes preserved
+            out_las = laspy.create(file_version=las.header.version, point_format=las.header.point_format)
+            out_las.header.offsets = las.header.offsets
+            out_las.header.scales = las.header.scales
+
+            # Copy ALL dimensions for surviving points
+            out_las.points = las.points[valid_indices]
+
+            # Crop to original bounds
+            original_tile = orig_tiles_dir / buffered_tile_path.name
+            minx, maxx, miny, maxy = get_native_bounds(original_tile)
+
+            mask = (
+                (out_las.x >= minx) & (out_las.x <= maxx) &
+                (out_las.y >= miny) & (out_las.y <= maxy)
+            )
+            out_las.points = out_las.points[mask]
+
+            # Write output
+            out_las.write(output_path)
+        else:
+            bounds = f"([{minx},{maxx}], [{miny},{maxy}])"
+            pipeline = {
+                "pipeline": [
+                    {"type": "readers.las", "filename": str(buffered_tile_path)},
+                    {
+                        "type": "filters.crop",
+                        "bounds": bounds
+                    },
+                    {
+                        "type": "writers.las",
+                        "filename": str(output_path),
+                        "compression": "laszip",
+                        "extra_dims": "all"
+                    }
+                ]
+            }
+            p = pdal.Pipeline(json.dumps(pipeline))
+            p.execute()
 
         return (buffered_tile_path.name, True, "Success")
     
@@ -130,6 +155,7 @@ def crop_tiles(
     input_dir: Path,
     output_dir: Path,
     orig_tiles_dir: Path,
+    deduplicate: bool,
     num_workers: int = 4
 ) -> Path: 
     """
@@ -139,6 +165,7 @@ def crop_tiles(
         input_dir: Directory containing input LAZ files
         output_dir: Base output directory
         orig_tiles_dir: Directory containing the original tiles
+        deduplicate: If set, duplicate points are removed
         num_workers: Number of parallel conversion workers
     
     Returns:
@@ -156,6 +183,7 @@ def crop_tiles(
 
     print(f"  Found {len(input_files)} files to crop")
     print(f"  Found {len(orig_files)} original files")
+    print(f"  Remove duplicate points: {deduplicate}")
     print(f"  Using {num_workers} parallel workers")
     print()
 
@@ -165,7 +193,7 @@ def crop_tiles(
     # prepare conversion tasks
     tasks = []  
     for file_path in input_files:
-        tasks.append((file_path, orig_tiles_dir, cropped_tiles_dir))
+        tasks.append((file_path, orig_tiles_dir, cropped_tiles_dir, deduplicate))
 
     # Process files in parallel
     successful = 0
