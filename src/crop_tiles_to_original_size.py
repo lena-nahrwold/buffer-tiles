@@ -10,11 +10,16 @@ def process_single_tile(args: Tuple[Path, Path, Path, bool]):
     
     try:
         original_tile = orig_tiles_dir / buffered_tile_path.name
-        minx, maxx, miny, maxy = get_native_bounds(original_tile)
+        native_bounds, scale, offset = get_native_bounds(original_tile)
+
+        minx, maxx, miny, maxy = native_bounds
+        sx, sy, sz = scale
+        ox, oy, oz = offset
 
         output_path = cropped_tiles_dir / buffered_tile_path.name
 
         bounds = f"([{minx},{maxx}], [{miny},{maxy}])"
+
         pipeline = {
             "pipeline": [
                 {"type": "readers.las", "filename": str(buffered_tile_path)},
@@ -25,6 +30,12 @@ def process_single_tile(args: Tuple[Path, Path, Path, bool]):
                 {
                     "type": "writers.las",
                     "filename": str(output_path),
+                    "scale_x": sx,
+                    "scale_y": sy,
+                    "scale_z": sz,
+                    "offset_x": ox,
+                    "offset_y": oy,
+                    "offset_z": oz,
                     "compression": "laszip",
                     "forward": "all",
                     "extra_dims": "all"
@@ -42,13 +53,35 @@ def process_single_tile(args: Tuple[Path, Path, Path, bool]):
 
 def get_native_bounds(laz_path):
     out = subprocess.check_output(
-        ["pdal", "info", str(laz_path)],
+        ["pdal", "info", "--summary", str(laz_path)],
         text=True
     )
     info = json.loads(out)
-    bbox = info["stats"]["bbox"]["native"]["bbox"]
-    
-    return bbox["minx"], bbox["maxx"], bbox["miny"], bbox["maxy"]
+
+    native_bounds = info["summary"]["bounds"]
+    metadata = info["summary"]["metadata"]
+
+    bounds = (
+        native_bounds["minx"],
+        native_bounds["maxx"],
+        native_bounds["miny"],
+        native_bounds["maxy"],
+    )
+
+    scale = (
+        metadata["scale_x"],
+        metadata["scale_y"],
+        metadata["scale_z"],
+    )
+
+    offset = (
+        metadata["offset_x"],
+        metadata["offset_y"],
+        metadata["offset_z"],
+    )
+
+    return bounds, scale, offset
+
 
     
 def crop_tiles(

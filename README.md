@@ -4,6 +4,13 @@
 conda env create -f environment.yml
 conda activate pdal-pipeline
 ```
+## Input data requirements
+- LAZ version 1.4 with a uniform scaling of 0.001.
+- Square tiles, with variable tile size, but always a multiple of 10 m.
+- File names correspond to the coordinates of the lower-left corner, e.g., `xxxxxx_yyyyyy.laz`.
+- Coordinate Reference System (CRS) is UTM with WGS84 ellipsoid by default; Z values represent ellipsoid heights.
+- Each tile’s bounding geometry is a polygon without holes.
+- The point source ID field is populated with scan position information for TLS data or flight strip information for ULS data.
 
 ## Run buffer task
 ```
