@@ -9,14 +9,7 @@ from tqdm import tqdm
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-def get_native_bounds(laz_path: Path):
-    out = subprocess.check_output(
-        ["pdal", "info", str(laz_path)],
-        text=True
-    )
-    info = json.loads(out)
-    bbox = info["stats"]["bbox"]["native"]["bbox"]
-    return bbox["minx"], bbox["maxx"], bbox["miny"], bbox["maxy"]
+from metadata import get_native_bounds
 
 def buffer_single_tile(args: Tuple[List, Tuple, Dict, int, 
 int, Path, Path]) -> Tuple[str, bool, str]:
@@ -30,13 +23,21 @@ int, Path, Path]) -> Tuple[str, bool, str]:
             if key in tiles:
                 neighbors.append(tiles[key])
 
-        # Buffered bounds
-        xmin, xmax, ymin, ymax = get_native_bounds(tile_path)
+        native_bounds, scale, offset = get_native_bounds(tile_path)
 
+        xmin, xmax, ymin, ymax = native_bounds
+        sx, sy, sz = scale
+        ox, oy, oz = offset
+
+        # Buffered bounds
         xmin_b = xmin - buffer_size
         xmax_b = xmax + buffer_size
         ymin_b = ymin - buffer_size
         ymax_b = ymax + buffer_size
+
+        ox_b = ox - buffer_size
+        oy_b = oy - buffer_size
+        oz_b = oz - buffer_size
 
         bounds = f"([{xmin_b},{xmax_b}],[{ymin_b},{ymax_b}])"
 
@@ -53,10 +54,24 @@ int, Path, Path]) -> Tuple[str, bool, str]:
 
             buffer_pipeline = {
                 "pipeline": [
-                    {"type": "readers.las", "filename": str(n_path)},
-                    {"type": "filters.crop", "bounds": bounds},
-                    {"type": "writers.las", "filename": str(buffer_file),
-                     "compression": "laszip", "extra_dims": "all"}
+                    {
+                        "type": "readers.las", 
+                        "filename": str(n_path)
+                    },
+                    {
+                        "type": "filters.crop", 
+                        "bounds": bounds
+                    },
+                    {
+                        "type": "writers.las", 
+                        "filename": str(buffer_file),
+                        "scale_x": sx,
+                        "scale_y": sy,
+                        "scale_z": sz,
+                        "compression": "laszip", 
+                        "forward": "all",
+                        "extra_dims": "all"
+                    }
                 ]
             }
 
@@ -67,11 +82,27 @@ int, Path, Path]) -> Tuple[str, bool, str]:
         # Merge core tile + all buffer files
         merge_pipeline = {
             "pipeline": [
-                {"type": "readers.las", "filename": str(tile_path)},
-                *({"type": "readers.las", "filename": str(f)} for f in buffer_files),
-                {"type": "filters.merge"},
-                {"type": "writers.las", "filename": str(out_file),
-                 "compression": "laszip", "extra_dims": "all"}
+                {
+                    "type": "readers.las", 
+                    "filename": str(tile_path)
+                },
+                *({
+                    "type": "readers.las", 
+                    "filename": str(f)} for f in buffer_files
+                ),
+                {
+                    "type": "filters.merge"
+                },
+                {
+                    "type": "writers.las", 
+                    "filename": str(out_file),
+                    "scale_x": sx,
+                    "scale_y": sy,
+                    "scale_z": sz,
+                    "compression": "laszip", 
+                    "forward": "all",
+                    "extra_dims": "all"
+                }
             ]
         }
 

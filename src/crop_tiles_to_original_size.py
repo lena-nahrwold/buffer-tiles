@@ -1,9 +1,10 @@
 import json
 import pdal
-import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
+
+from metadata import get_native_bounds
 
 def process_single_tile(args: Tuple[Path, Path, Path, bool]):
     buffered_tile_path, orig_tiles_dir, cropped_tiles_dir = args
@@ -49,40 +50,6 @@ def process_single_tile(args: Tuple[Path, Path, Path, bool]):
     
     except Exception as e:
         return (buffered_tile_path.name, False, str(e))
-    
-
-def get_native_bounds(laz_path):
-    out = subprocess.check_output(
-        ["pdal", "info", "--summary", str(laz_path)],
-        text=True
-    )
-    info = json.loads(out)
-
-    native_bounds = info["summary"]["bounds"]
-    metadata = info["summary"]["metadata"]
-
-    bounds = (
-        native_bounds["minx"],
-        native_bounds["maxx"],
-        native_bounds["miny"],
-        native_bounds["maxy"],
-    )
-
-    scale = (
-        metadata["scale_x"],
-        metadata["scale_y"],
-        metadata["scale_z"],
-    )
-
-    offset = (
-        metadata["offset_x"],
-        metadata["offset_y"],
-        metadata["offset_z"],
-    )
-
-    return bounds, scale, offset
-
-
     
 def crop_tiles(
     input_dir: Path,
