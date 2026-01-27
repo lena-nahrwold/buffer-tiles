@@ -8,19 +8,39 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-def crop_single_tile(args: Tuple[Path, Path, Path, bool]):
+def process_single_tile(args: Tuple[Path, Path, Path, bool]):
     buffered_tile_path, orig_tiles_dir, cropped_tiles_dir, deduplicate = args
     
     try:
-        # Load buffered tile
-        las = laspy.read(str(buffered_tile_path), laz_backend=laspy.LazBackend.LazrsParallel)
-
         original_tile = orig_tiles_dir / buffered_tile_path.name
         minx, maxx, miny, maxy = get_native_bounds(original_tile)
 
         output_path = cropped_tiles_dir / buffered_tile_path.name
 
+        bounds = f"([{minx},{maxx}], [{miny},{maxy}])"
+        pipeline = {
+            "pipeline": [
+                {"type": "readers.las", "filename": str(buffered_tile_path)},
+                {
+                    "type": "filters.crop",
+                    "bounds": bounds
+                },
+                {
+                    "type": "writers.las",
+                    "filename": str(output_path),
+                    "compression": "laszip",
+                    "forward": "all",
+                    "extra_dims": "all"
+                }
+            ]
+        }
+        p = pdal.Pipeline(json.dumps(pipeline))
+        p.execute()
+
         if deduplicate:
+            # Load cropped tile
+            las = laspy.read(str(output_path), laz_backend=laspy.LazBackend.LazrsParallel)
+
             n_points = len(las.points)
 
             # Extract XYZ
@@ -56,27 +76,8 @@ def crop_single_tile(args: Tuple[Path, Path, Path, bool]):
 
             # Write output
             out_las.write(output_path)
-        else:
-            bounds = f"([{minx},{maxx}], [{miny},{maxy}])"
-            pipeline = {
-                "pipeline": [
-                    {"type": "readers.las", "filename": str(buffered_tile_path)},
-                    {
-                        "type": "filters.crop",
-                        "bounds": bounds
-                    },
-                    {
-                        "type": "writers.las",
-                        "filename": str(output_path),
-                        "compression": "laszip",
-                        "extra_dims": "all"
-                    }
-                ]
-            }
-            p = pdal.Pipeline(json.dumps(pipeline))
-            p.execute()
 
-        return (buffered_tile_path.name, True, "Success")
+        return (output_path.name, True, "Success")
     
     except Exception as e:
         return (buffered_tile_path.name, False, str(e))
@@ -148,6 +149,7 @@ def get_native_bounds(laz_path):
     )
     info = json.loads(out)
     bbox = info["stats"]["bbox"]["native"]["bbox"]
+    
     return bbox["minx"], bbox["maxx"], bbox["miny"], bbox["maxy"]
 
     
@@ -200,7 +202,7 @@ def crop_tiles(
     failed = 0
 
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        futures = {executor.submit(crop_single_tile, task): task[0] for task in tasks}
+        futures = {executor.submit(process_single_tile, task): task[0] for task in tasks}
         
         for future in as_completed(futures):
             filename, success, message = future.result()
