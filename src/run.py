@@ -31,7 +31,6 @@ def run_crop_task(params):
     input_dir = params.input_dir
     output_dir = params.output_dir
     orig_tiles_dir= params.orig_tiles_dir
-    deduplicate = params.deduplicate
     workers = params.workers
 
     print("=" * 60)
@@ -40,11 +39,10 @@ def run_crop_task(params):
     print(f"Input directory: {input_dir}")
     print(f"Output base directory: {output_dir}")
     print(f"Original tiles directory: {orig_tiles_dir}")
-    print(f"Deduplicate: {deduplicate}")
     print(f"Workers: {workers}")
     print()
 
-    crop_tiles(input_dir, output_dir, orig_tiles_dir, deduplicate, workers)
+    crop_tiles(input_dir, output_dir, orig_tiles_dir, workers)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -53,7 +51,6 @@ def main():
     parser.add_argument("--input_dir", type=str, required=True)
     parser.add_argument("--output_dir", type=str, default="src/output")
     parser.add_argument("--orig_tiles_dir", type=str)
-    parser.add_argument("--deduplicate", action="store_true")
     parser.add_argument("--workers", type=int, default=4)
 
     args = parser.parse_args()
