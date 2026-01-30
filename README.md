@@ -17,11 +17,22 @@ conda activate pdal-pipeline
 python src/run.py --task buffer --buffer_size 10 --input_dir /path/to/input --output_dir /path/to/output
 ```
 
-## Run crop task 
+## Run (instance) merge task
+```
+python src/merge_tiles.py \
+    --input-dir /path/to/segmented_buffered_tiles \
+    --original-tiles-dir /path/to/original_tiles \
+    --output-merged /path/to/merged.laz \
+    --output-tiles-dir /path/to/output_tiles
+```
+For complete smart tiling and merging pipeline see: https://github.com/3dTrees-earth/3dtrees_Smart_Tile
+
+## Run simple crop task 
 Crop buffered tiles back to original bounds:
 ```
 python src/run.py --task crop --input_dir /path/to/input --orig_tiles_dir /path/to/original/tiles --output_dir /path/to/output
 ```
+
 
 
 ## ToDo's
